@@ -95,6 +95,79 @@ class OracleLLM:
             return self._chat_vllm_local_with_usage(messages)
         raise ValueError(f"Unsupported provider: {self.provider}")
 
+    def _extract_openai_chat_text(self, response: Any) -> str:
+        choices = getattr(response, "choices", None) or []
+        if not choices:
+            print("Warning: OpenAI chat completion has no choices; using 'Unknown'.", file=sys.stderr)
+            return "Unknown"
+
+        message = getattr(choices[0], "message", None)
+        if message is None:
+            print("Warning: OpenAI chat completion has no message; using 'Unknown'.", file=sys.stderr)
+            return "Unknown"
+
+        content = getattr(message, "content", None)
+        text = ""
+        if isinstance(content, str):
+            text = content.strip()
+        elif isinstance(content, list):
+            parts: List[str] = []
+            for part in content:
+                part_type = getattr(part, "type", None)
+                part_text = getattr(part, "text", None)
+                if part_type == "text" and isinstance(part_text, str):
+                    parts.append(part_text)
+                    continue
+                if isinstance(part, dict):
+                    if part.get("type") == "text" and isinstance(part.get("text"), str):
+                        parts.append(part["text"])
+            text = "\n".join(p.strip() for p in parts if p).strip()
+
+        if text:
+            return text
+
+        refusal = getattr(message, "refusal", None)
+        if refusal:
+            print(f"Warning: OpenAI returned refusal: {refusal}", file=sys.stderr)
+        else:
+            print("Warning: OpenAI returned empty content; using 'Unknown'.", file=sys.stderr)
+        return "Unknown"
+
+    def _call_openai_with_retry(
+        self,
+        fn: Callable[[], Any],
+        op_name: str,
+    ) -> Any:
+        max_retries = int(self.config.get("max_retries", 0) or 0)
+        request_delay = float(self.config.get("request_delay", 0.0) or 0.0)
+
+        attempt = 0
+        while True:
+            try:
+                return fn()
+            except Exception as exc:
+                attempt += 1
+                status_code = getattr(exc, "status_code", None)
+                msg = str(exc)
+                lower_msg = msg.lower()
+                retryable = (
+                    status_code in {429, 500, 502, 503, 504}
+                    or "get_channel_failed" in lower_msg
+                    or "model_not_found" in lower_msg
+                    or "rate limit" in lower_msg
+                    or "timeout" in lower_msg
+                )
+                if attempt > max_retries or not retryable:
+                    raise
+                wait_s = request_delay * (2 ** (attempt - 1)) if request_delay > 0 else 0.0
+                print(
+                    f"Warning: {op_name} failed (attempt {attempt}/{max_retries + 1}): {exc}",
+                    file=sys.stderr,
+                )
+                if wait_s > 0:
+                    print(f"Warning: retrying in {wait_s:.2f}s", file=sys.stderr)
+                    time.sleep(wait_s)
+
     def _chat_openai(self, messages: List[Dict[str, Any]]) -> str:
         if not self.openai_client:
             raise RuntimeError("OpenAI client not initialized")
@@ -121,7 +194,10 @@ class OracleLLM:
                 and _responses_supports_temperature(model)
             ):
                 kwargs["temperature"] = self.config.get("temperature")
-            response = self.openai_client.responses.create(**kwargs)
+            response = self._call_openai_with_retry(
+                lambda: self.openai_client.responses.create(**kwargs),
+                "openai.responses.create",
+            )
             return _extract_response_text(response)
 
         kwargs: Dict[str, Any] = {
@@ -139,8 +215,11 @@ class OracleLLM:
             kwargs["max_tokens"] = max_tokens_value
             kwargs["temperature"] = self.config.get("temperature")
 
-        response = self.openai_client.chat.completions.create(**kwargs)
-        return response.choices[0].message.content.strip()
+        response = self._call_openai_with_retry(
+            lambda: self.openai_client.chat.completions.create(**kwargs),
+            "openai.chat.completions.create",
+        )
+        return self._extract_openai_chat_text(response)
 
     def _chat_openai_with_usage(
         self, messages: List[Dict[str, Any]]
@@ -170,7 +249,10 @@ class OracleLLM:
                 and _responses_supports_temperature(model)
             ):
                 kwargs["temperature"] = self.config.get("temperature")
-            response = self.openai_client.responses.create(**kwargs)
+            response = self._call_openai_with_retry(
+                lambda: self.openai_client.responses.create(**kwargs),
+                "openai.responses.create",
+            )
             content = _extract_response_text(response)
             usage = None
             resp_usage = getattr(response, "usage", None)
@@ -198,8 +280,11 @@ class OracleLLM:
             kwargs["max_tokens"] = max_tokens_value
             kwargs["temperature"] = self.config.get("temperature")
 
-        response = self.openai_client.chat.completions.create(**kwargs)
-        content = response.choices[0].message.content.strip()
+        response = self._call_openai_with_retry(
+            lambda: self.openai_client.chat.completions.create(**kwargs),
+            "openai.chat.completions.create",
+        )
+        content = self._extract_openai_chat_text(response)
         usage = None
         if response.usage:
             usage = TokenUsage(
@@ -1054,7 +1139,12 @@ def process_single_qa(
         answer, usage = llm.chat_with_usage(messages)
     except Exception as exc:
         print(f"Error: QA {qa_id} failed: {exc}", file=sys.stderr)
-        raise
+        return {
+            "id": qa_id,
+            "answer": "Unknown",
+            "error": str(exc),
+            "failed": True,
+        }
     result: Dict[str, Any] = {"id": qa_id, "answer": answer}
     if usage:
         result["prompt_tokens"] = usage.prompt_tokens
