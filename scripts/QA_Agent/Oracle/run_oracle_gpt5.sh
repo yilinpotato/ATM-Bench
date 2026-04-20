@@ -9,7 +9,9 @@ export OPENAI_API_KEY
 OPENAI_BASE_URL="${OPENAI_BASE_URL:-}"
 JUDGE_OPENAI_BASE_URL="${JUDGE_OPENAI_BASE_URL:-${OPENAI_BASE_URL}}"
 
+
 MODEL_NAME="${MODEL_NAME:-gpt-4o-2024-08-06}"
+
 # Comma-separated fallback list. First available model will be used.
 MODEL_CANDIDATES="${MODEL_CANDIDATES:-${MODEL_NAME},gpt-4o-mini,gpt-4.1-mini}"
 MODEL_TAG="gpt5"
