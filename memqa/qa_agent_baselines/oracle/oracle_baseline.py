@@ -56,7 +56,10 @@ class OracleLLM:
         self.vllm_local = None
 
         if self.provider == "openai":
-            self.openai_client = OpenAI(api_key=self.config.get("api_key"))
+            self.openai_client = OpenAI(
+                api_key=self.config.get("api_key"),
+                base_url=self.config.get("base_url") or None,
+            )
         elif self.provider == "vllm_local":
             try:
                 from vllm import LLM  # type: ignore
@@ -636,6 +639,8 @@ def build_model_config(
         base["model"] = args.model
     if args.api_key:
         base["api_key"] = args.api_key
+    if args.openai_base_url:
+        base["base_url"] = args.openai_base_url
     if args.vllm_endpoint:
         base["endpoint"] = args.vllm_endpoint
     if args.max_tokens is not None:
@@ -907,6 +912,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--model", default=None, help="Model name (overrides config)")
     parser.add_argument("--api-key", default=None, help="API key (overrides config)")
+    parser.add_argument(
+        "--openai-base-url",
+        default=None,
+        help="OpenAI-compatible base URL for provider=openai (overrides config)",
+    )
     parser.add_argument(
         "--vllm-endpoint", default=None, help="VLLM endpoint URL (overrides config)"
     )

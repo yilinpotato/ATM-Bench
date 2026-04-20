@@ -2,6 +2,9 @@
 
 JUDGE_MODEL_GPT="${JUDGE_MODEL_GPT:-gpt-5-mini}"
 JUDGE_MAX_WORKERS="${JUDGE_MAX_WORKERS:-8}"
+JUDGE_PROVIDER="${JUDGE_PROVIDER:-openai}"
+JUDGE_ENDPOINT="${JUDGE_ENDPOINT:-}"
+JUDGE_OPENAI_BASE_URL="${JUDGE_OPENAI_BASE_URL:-${OPENAI_BASE_URL:-}}"
 
 run_eval_bundle() {
     local ground_truth="$1"
@@ -15,13 +18,25 @@ run_eval_bundle() {
 
     mkdir -p "${eval_dir}"
 
+    local judge_endpoint_args=()
+    if [ -n "${JUDGE_ENDPOINT}" ]; then
+        judge_endpoint_args+=(--judge-endpoint "${JUDGE_ENDPOINT}")
+    fi
+
+    local judge_openai_base_url_args=()
+    if [ -n "${JUDGE_OPENAI_BASE_URL}" ]; then
+        judge_openai_base_url_args+=(--judge-openai-base-url "${JUDGE_OPENAI_BASE_URL}")
+    fi
+
     python memqa/utils/evaluator/evaluate_qa.py \
         --ground-truth "${ground_truth}" \
         --predictions "${predictions}" \
         --output-dir "${eval_dir}" \
         --metrics em atm \
-        --judge-provider openai \
+        --judge-provider "${JUDGE_PROVIDER}" \
         --judge-model "${JUDGE_MODEL_GPT}" \
+        "${judge_endpoint_args[@]}" \
+        "${judge_openai_base_url_args[@]}" \
         --judge-reasoning-effort minimal \
         --max-workers "${JUDGE_MAX_WORKERS}"
 

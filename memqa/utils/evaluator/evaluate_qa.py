@@ -457,7 +457,10 @@ class EvaluatorLLM:
                 raise RuntimeError(
                     "openai package is required for --judge-provider openai."
                 ) from exc
-            self.openai_client = OpenAI(api_key=self.config.get("api_key"))
+            self.openai_client = OpenAI(
+                api_key=self.config.get("api_key"),
+                base_url=self.config.get("base_url") or None,
+            )
 
     def chat(self, messages: List[Dict[str, Any]]) -> str:
         if self.provider == "openai":
@@ -1209,6 +1212,11 @@ def parse_args() -> argparse.Namespace:
         help="Override vLLM endpoint for LLM judge",
     )
     parser.add_argument(
+        "--judge-openai-base-url",
+        default=None,
+        help="Override OpenAI-compatible base URL for OpenAI judge",
+    )
+    parser.add_argument(
         "--judge-thinking",
         default=None,
         choices=["enabled", "disabled"],
@@ -1268,6 +1276,8 @@ def build_judge_config(args: argparse.Namespace) -> Dict[str, Any]:
     judge_config["model"] = args.judge_model
     if args.judge_endpoint:
         judge_config["endpoint"] = args.judge_endpoint
+    if args.judge_openai_base_url:
+        judge_config["base_url"] = args.judge_openai_base_url
     if args.judge_temperature is not None:
         judge_config["temperature"] = args.judge_temperature
     elif args.judge_provider == "vllm":
